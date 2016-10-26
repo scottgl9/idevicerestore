@@ -141,6 +141,8 @@ int recovery_set_autoboot(struct idevicerestore_client_t* client, int enable) {
 	return 0;
 }
 
+
+// this is what makes device enter restore mode
 int recovery_enter_restore(struct idevicerestore_client_t* client, plist_t build_identity) {
 	if (client->build_major >= 8) {
 		client->restore_boot_args = strdup("rd=md0 nand-enable-reformat=1 -progress");

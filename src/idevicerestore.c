@@ -21,6 +21,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
+
+// important functions:
+// recovery_send_ticket(client) -- done before sending ibec
+// recovery_send_ibec(client, build_identity) -- this is done before recovery_enter_restore()
+// recovery_enter_restore(client, build_identity) -- enters restore mode
+// restore_device(client, build_identity, filesystem) - does the actual restore
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -67,7 +74,6 @@ static struct option longopts[] = {
 	{ "cydia",   no_argument,       NULL, 's' },
 	{ "exclude", no_argument,       NULL, 'x' },
 	{ "shsh",    no_argument,       NULL, 't' },
-	{ "pwn",     no_argument,       NULL, 'p' },
 	{ "no-action", no_argument,     NULL, 'n' },
 	{ "cache-path", required_argument, NULL, 'C' },
 	{ NULL, 0, NULL, 0 }
@@ -93,7 +99,6 @@ void usage(int argc, char* argv[]) {
 	printf("  -s, --cydia\t\tuse Cydia's signature service instead of Apple's\n");
 	printf("  -x, --exclude\t\texclude nor/baseband upgrade\n");
 	printf("  -t, --shsh\t\tfetch TSS record and save to .shsh file, then exit\n");
-	printf("  -p, --pwn\t\tPut device in pwned DFU mode and exit (limera1n devices only)\n");
 	printf("  -n, --no-action\tDo not perform any restore action. If combined with -l option\n");
 	printf("                 \tthe on demand ipsw download is performed before exiting.\n");
 	printf("  -C, --cache-path DIR\tUse specified directory for caching extracted\n");
@@ -287,31 +292,6 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 	idevicerestore_progress(client, RESTORE_STEP_DETECT, 0.2);
 	info("Identified device as %s, %s\n", client->device->hardware_model, client->device->product_type);
 
-	if ((client->flags & FLAG_PWN) && (client->mode->index != MODE_DFU)) {
-		error("ERROR: you need to put your device into DFU mode to pwn it.\n");
-		return -1;
-	}
-
-	if (client->flags & FLAG_PWN) {
-		recovery_client_free(client);
-
-		info("connecting to DFU\n");
-		if (dfu_client_new(client) < 0) {
-			return -1;
-		}
-		info("exploiting with limera1n...\n");
-		// TODO: check for non-limera1n device and fail
-		if (limera1n_exploit(client->device, &client->dfu->client) != 0) {
-			error("ERROR: limera1n exploit failed\n");
-			dfu_client_free(client);
-			return -1;
-		}
-		dfu_client_free(client);
-		info("Device should be in pwned DFU state now.\n");
-
-		return 0;
-	}
-
 	if (client->flags & FLAG_LATEST) {
 		char* ipsw = NULL;
 		int res = ipsw_download_latest_fw(client->version_data, client->device->product_type, client->cache_dir, &ipsw);
@@ -350,8 +330,8 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 		return -1;
 	}
 
-	// extract buildmanifest
-	plist_t buildmanifest = NULL;
+	// extract buildmanifest, buildmanifest2 is for the customized plist for custom firmware
+	plist_t buildmanifest = NULL, buildmanifest2 = NULL;
 	if (client->flags & FLAG_CUSTOM) {
 		info("Extracting Restore.plist from IPSW\n");
 		if (ipsw_extract_restore_plist(client->ipsw, &buildmanifest) < 0) {
@@ -360,7 +340,7 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 		}
 	} else {
 		info("Extracting BuildManifest from IPSW\n");
-		if (ipsw_extract_build_manifest(client->ipsw, &buildmanifest, &tss_enabled) < 0) {
+		if (ipsw_extract_build_manifest(client->ipsw, &buildmanifest, &buildmanifest2, &tss_enabled) < 0) {
 			error("ERROR: Unable to extract BuildManifest from %s. Firmware file might be corrupt.\n", client->ipsw);
 			return -1;
 		}
@@ -381,16 +361,17 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 
 	client->image4supported = is_image4_supported(client);
 	info("Device supports Image4: %s\n", (client->image4supported) ? "true" : "false");
-
+/*
 	if (client->flags & FLAG_CUSTOM) {
-		/* prevent signing custom firmware */
+		// prevent signing custom firmware
 		tss_enabled = 0;
 		info("Custom firmware requested. Disabled TSS request.\n");
 	}
-
+*/
 	// choose whether this is an upgrade or a restore (default to upgrade)
 	client->tss = NULL;
 	plist_t build_identity = NULL;
+/*
 	if (client->flags & FLAG_CUSTOM) {
 		build_identity = plist_new_dict();
 		{
@@ -542,7 +523,9 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 			// finally add manifest
 			plist_dict_set_item(build_identity, "Manifest", manifest);
 		}
-	} else if (client->flags & FLAG_ERASE) {
+	} else
+*/
+	if (client->flags & FLAG_ERASE) {
 		build_identity = build_manifest_get_build_identity_for_model_with_restore_behavior(buildmanifest, client->device->hardware_model, "Erase");
 		if (build_identity == NULL) {
 			error("ERROR: Unable to find any build identities\n");
@@ -763,25 +746,6 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 	if (client->mode->index == MODE_DFU) {
 		dfu_client_free(client);
 		recovery_client_free(client);
-		if ((client->flags & FLAG_CUSTOM) && limera1n_is_supported(client->device)) {
-			info("connecting to DFU\n");
-			if (dfu_client_new(client) < 0) {
-				if (delete_fs && filesystem)
-					unlink(filesystem);
-				return -1;
-			}
-			info("exploiting with limera1n\n");
-			// TODO: check for non-limera1n device and fail
-			if (limera1n_exploit(client->device, &client->dfu->client) != 0) {
-				error("ERROR: limera1n exploit failed\n");
-				dfu_client_free(client);
-				if (delete_fs && filesystem)
-					unlink(filesystem);
-				return -1;
-			}
-			dfu_client_free(client);
-			info("exploited\n");
-		}
 		if (dfu_enter_recovery(client, build_identity) < 0) {
 			error("ERROR: Unable to place device into recovery mode from %s mode\n", client->mode->string);
 			plist_free(buildmanifest);
@@ -805,7 +769,7 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 			}
 		}
 
-		/* now we load the iBEC */
+		/* now we load the iBEC before doing anything else */
 		if (recovery_send_ibec(client, build_identity) < 0) {
 			error("ERROR: Unable to send iBEC\n");
 			if (delete_fs && filesystem)
@@ -872,6 +836,9 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 				unlink(filesystem);
 			return -1;
 		}
+
+
+		// this is where we actually enter restore mode
 		if (recovery_enter_restore(client, build_identity) < 0) {
 			error("ERROR: Unable to place device into restore mode\n");
 			plist_free(buildmanifest);
@@ -888,6 +855,9 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 	// device is finally in restore mode, let's do this
 	if (client->mode->index == MODE_RESTORE) {
 		info("About to restore device... \n");
+
+
+		// now restore the device
 		result = restore_device(client, build_identity, filesystem);
 		if (result < 0) {
 			error("ERROR: Unable to restore device\n");

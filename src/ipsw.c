@@ -233,13 +233,14 @@ int ipsw_extract_to_memory(const char* ipsw, const char* infile, unsigned char**
 	return 0;
 }
 
-int ipsw_extract_build_manifest(const char* ipsw, plist_t* buildmanifest, int *tss_enabled) {
+int ipsw_extract_build_manifest(const char* ipsw, plist_t* buildmanifest, plist_t* buildmanifest2, int *tss_enabled) {
 	unsigned int size = 0;
 	unsigned char* data = NULL;
 
 	*tss_enabled = 0;
 
 	/* older devices don't require personalized firmwares and use a BuildManifesto.plist */
+/*
 	if (ipsw_file_exists(ipsw, "BuildManifesto.plist") == 0) {
 		if (ipsw_extract_to_memory(ipsw, "BuildManifesto.plist", &data, &size) == 0) {
 			plist_from_xml((char*)data, size, buildmanifest);
@@ -247,7 +248,7 @@ int ipsw_extract_build_manifest(const char* ipsw, plist_t* buildmanifest, int *t
 			return 0;
 		}
 	}
-
+*/
 	data = NULL;
 	size = 0;
 
@@ -258,6 +259,14 @@ int ipsw_extract_build_manifest(const char* ipsw, plist_t* buildmanifest, int *t
 		free(data);
 		return 0;
 	}
+
+	// this is for custom fw
+        if (ipsw_extract_to_memory(ipsw, "BuildManifest2.plist", &data, &size) == 0) {
+                plist_from_xml((char*)data, size, buildmanifest2);
+                free(data);
+                return 0;
+        }
+
 
 	return -1;
 }
