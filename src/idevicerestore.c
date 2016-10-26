@@ -370,7 +370,7 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 */
 	// choose whether this is an upgrade or a restore (default to upgrade)
 	client->tss = NULL;
-	plist_t build_identity = NULL;
+	plist_t build_identity = NULL, build_identity2 = NULL;
 /*
 	if (client->flags & FLAG_CUSTOM) {
 		build_identity = plist_new_dict();
@@ -527,6 +527,7 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 */
 	if (client->flags & FLAG_ERASE) {
 		build_identity = build_manifest_get_build_identity_for_model_with_restore_behavior(buildmanifest, client->device->hardware_model, "Erase");
+		build_identity2 = build_manifest_get_build_identity_for_model_with_restore_behavior(buildmanifest2, client->device->hardware_model, "Erase");
 		if (build_identity == NULL) {
 			error("ERROR: Unable to find any build identities\n");
 			plist_free(buildmanifest);
@@ -534,6 +535,7 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 		}
 	} else {
 		build_identity = build_manifest_get_build_identity_for_model_with_restore_behavior(buildmanifest, client->device->hardware_model, "Update");
+		build_identity2 = build_manifest_get_build_identity_for_model_with_restore_behavior(buildmanifest2, client->device->hardware_model, "Update");
 		if (!build_identity) {
 			build_identity = build_manifest_get_build_identity_for_model(buildmanifest, client->device->hardware_model);
 		}
@@ -857,8 +859,8 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 		info("About to restore device... \n");
 
 
-		// now restore the device
-		result = restore_device(client, build_identity, filesystem);
+		// now restore the device (use cfw build_identity2
+		result = restore_device(client, build_identity2, filesystem);
 		if (result < 0) {
 			error("ERROR: Unable to restore device\n");
 			if (delete_fs && filesystem)
@@ -893,8 +895,16 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 	if (buildmanifest)
 		plist_free(buildmanifest);
 
+        if (buildmanifest2)
+                plist_free(buildmanifest2);
+
+
 	if (build_identity)
 		plist_free(build_identity);
+
+        if (build_identity2)
+                plist_free(build_identity2);
+
 
 	return result;
 }
