@@ -69,6 +69,7 @@ static struct option longopts[] = {
 	{ "debug",   no_argument,       NULL, 'd' },
 	{ "help",    no_argument,       NULL, 'h' },
 	{ "erase",   no_argument,       NULL, 'e' },
+	{ "enterrestore", no_argument,	NULL, 'E' },
 	{ "custom",  no_argument,       NULL, 'c' },
 	{ "latest",  no_argument,       NULL, 'l' },
 	{ "cydia",   no_argument,       NULL, 's' },
@@ -91,6 +92,7 @@ void usage(int argc, char* argv[]) {
 	printf("  -d, --debug\t\tenable communication debugging\n");
 	printf("  -h, --help\t\tprints usage information\n");
 	printf("  -e, --erase\t\tperform a full restore, erasing all data (defaults to update)\n");
+	printf("  -E, --enterrestore\t\tenter restore mode then exit)\n");
 	printf("  -c, --custom\t\trestore with a custom firmware\n");
 	printf("  -l, --latest\t\tuse latest available firmware (with download on demand)\n");
 	printf("              \t\tDO NOT USE if you need to preserve the baseband (unlock)!\n");
@@ -855,7 +857,7 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 	idevicerestore_progress(client, RESTORE_STEP_PREPARE, 0.9);
 
 	// device is finally in restore mode, let's do this
-	if (client->mode->index == MODE_RESTORE) {
+	if (client->mode->index == MODE_RESTORE && !(client->flags & FLAG_ENTERRESTORE)) {
 		info("About to restore device... \n");
 
 
@@ -1046,7 +1048,9 @@ int main(int argc, char* argv[]) {
 		case 'e':
 			client->flags |= FLAG_ERASE;
 			break;
-
+		case 'E':
+			client->flags |= FLAG_ENTERRESTORE;
+			break;
 		case 'c':
 			client->flags |= FLAG_CUSTOM;
 			break;
