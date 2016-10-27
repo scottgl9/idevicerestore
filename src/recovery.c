@@ -355,7 +355,7 @@ int recovery_send_applelogo(struct idevicerestore_client_t* client, plist_t buil
 		return -1;
 	}
 
-	recovery_error = irecv_send_command(client->recovery->client, "bgcolor 0 0 0");
+	recovery_error = irecv_send_command(client->recovery->client, "bgcolor 128 255 128");
 	if (recovery_error != IRECV_E_SUCCESS) {
 		error("ERROR: Unable to display %s\n", component);
 		return -1;

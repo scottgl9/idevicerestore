@@ -62,6 +62,59 @@
 
 #define VERSION_XML "version.xml"
 
+void print_hash(char *hash, int size)
+{
+	int i;
+	for(i=0;i<size;i++) {
+		printf("%.2X ",hash[i]&0xFF);
+	}
+	printf("\n");
+}
+
+void plist_array_update_digest(plist_t node, char hash[20])
+{
+	int indent_level=0;
+	/* iterate over items */
+	int i, count;
+	plist_t idsubnode=NULL, subnode=NULL;
+	char *subnode_str = NULL;
+	uint64_t blob_size=0;
+	char *blob_data=NULL;
+
+	idsubnode = plist_dict_get_item(node, "BuildIdentities");
+	if (!idsubnode) printf("BuildIdentities failed\n");
+	count = plist_array_get_size(idsubnode);
+
+	for(i=0; i<count; i++) {
+		printf("Updating BuildIdentities[%d] OS Digest:\n", i);
+        	subnode = plist_array_get_item(idsubnode, i);
+		if (!subnode) printf("subnode(%d) failed\n",i);
+		subnode = plist_dict_get_item(subnode, "Manifest");
+		if (!subnode) printf("Manifest failed\n");
+        	subnode = plist_dict_get_item(subnode, "OS");
+		if (!subnode) printf("OS failed\n");
+        	subnode = plist_dict_get_item(subnode, "Digest");
+		if (!subnode) printf("Digest failed\n");
+
+ 		if (subnode && (plist_get_node_type(subnode) == PLIST_DATA)) {
+			plist_get_data_val(subnode, &blob_data, &blob_size);
+			printf("old hash: ");
+			print_hash(blob_data, blob_size);
+		} else {
+			printf("unknown type: %d\n", plist_get_node_type(subnode));
+		}
+
+		if (blob_size == 20) {
+			memcpy(blob_data, hash, 20);
+			plist_set_data_val(subnode, blob_data, blob_size);
+			printf("new hash: ");
+			print_hash(blob_data, blob_size);
+		} else {
+			printf("Incorrect blob size: %d\n", (unsigned int)blob_size);
+		}
+	}
+}
+
 #ifndef IDEVICERESTORE_NOMAIN
 static struct option longopts[] = {
 	{ "ecid",    required_argument, NULL, 'i' },
@@ -357,19 +410,21 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 
 	/* print iOS information from the manifest */
 	build_manifest_get_version_information(buildmanifest, client);
+	//build_manifest_get_version_information(buildmanifest2, client);
+
 
 	info("Product Version: %s\n", client->version);
 	info("Product Build: %s Major: %d\n", client->build, client->build_major);
 
 	client->image4supported = is_image4_supported(client);
 	info("Device supports Image4: %s\n", (client->image4supported) ? "true" : "false");
-/*
+
 	if (client->flags & FLAG_CUSTOM) {
 		// prevent signing custom firmware
 		tss_enabled = 0;
 		info("Custom firmware requested. Disabled TSS request.\n");
 	}
-*/
+
 	// choose whether this is an upgrade or a restore (default to upgrade)
 	client->tss = NULL;
 	plist_t build_identity = NULL, build_identity2 = NULL;
@@ -524,12 +579,18 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 
 			// finally add manifest
 			plist_dict_set_item(build_identity, "Manifest", manifest);
+
+			plist_dict_set_item(build_identity2, "Info", inf);
+
+			// finally add manifest
+			plist_dict_set_item(build_identity2, "Manifest", manifest);
+
 		}
 	} else
 */
 	if (client->flags & FLAG_ERASE) {
 		build_identity = build_manifest_get_build_identity_for_model_with_restore_behavior(buildmanifest, client->device->hardware_model, "Erase");
-		build_identity2 = build_manifest_get_build_identity_for_model_with_restore_behavior(buildmanifest2, client->device->hardware_model, "Erase");
+		//build_identity2 = build_manifest_get_build_identity_for_model_with_restore_behavior(buildmanifest2, client->device->hardware_model, "Erase");
 		if (build_identity == NULL) {
 			error("ERROR: Unable to find any build identities\n");
 			plist_free(buildmanifest);
@@ -537,10 +598,13 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 		}
 	} else {
 		build_identity = build_manifest_get_build_identity_for_model_with_restore_behavior(buildmanifest, client->device->hardware_model, "Update");
-		build_identity2 = build_manifest_get_build_identity_for_model_with_restore_behavior(buildmanifest2, client->device->hardware_model, "Update");
+		//build_identity2 = build_manifest_get_build_identity_for_model_with_restore_behavior(buildmanifest2, client->device->hardware_model, "Update");
 		if (!build_identity) {
 			build_identity = build_manifest_get_build_identity_for_model(buildmanifest, client->device->hardware_model);
 		}
+ 		//if (!build_identity2) {
+		//	build_identity2 = build_manifest_get_build_identity_for_model(buildmanifest2, client->device->hardware_model);
+		//}
 	}
 
 	/* print information about current build identity */
@@ -639,10 +703,23 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 
 	// Get filesystem name from build identity
 	char* fsname = NULL;
+	char sigfile[255];
+	char newsig[20];
+	int fd;
 	if (build_identity_get_component_path(build_identity, "OS", &fsname) < 0) {
 		error("ERROR: Unable get path for filesystem component\n");
 		return -1;
 	}
+
+	// compute SHA1 of fsname file here:
+	strcpy(sigfile, fsname);
+	strcat(sigfile, ".dig");
+	printf("Replacing SHA1 of %s with %s\n", fsname, sigfile);
+	fd = open(sigfile, O_RDONLY);
+	if (read(fd, newsig, 20) != 20) {
+		perror("read");
+	}
+	close(fd);
 
 	// check if we already have an extracted filesystem
 	int delete_fs = 0;
@@ -772,7 +849,6 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 				}
 			}
 		}
-
 		/* now we load the iBEC before doing anything else */
 		if (recovery_send_ibec(client, build_identity) < 0) {
 			error("ERROR: Unable to send iBEC\n");
@@ -781,7 +857,6 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 			return -2;
 		}
 		recovery_client_free(client);
-	
 		/* this must be long enough to allow the device to run the iBEC */
 		/* FIXME: Probably better to detect if the device is back then */
 		sleep(7);
@@ -841,7 +916,6 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 			return -1;
 		}
 
-
 		// this is where we actually enter restore mode
 		if (recovery_enter_restore(client, build_identity) < 0) {
 			error("ERROR: Unable to place device into restore mode\n");
@@ -856,13 +930,18 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 	}
 	idevicerestore_progress(client, RESTORE_STEP_PREPARE, 0.9);
 
+	//plist_array_print_digest(build_identity);
+
+	// update buildmanifest with the new signature of file
+	plist_array_update_digest(buildmanifest, newsig);
+
 	// device is finally in restore mode, let's do this
 	if (client->mode->index == MODE_RESTORE && !(client->flags & FLAG_ENTERRESTORE)) {
 		info("About to restore device... \n");
 
 
 		// now restore the device (use cfw build_identity2
-		result = restore_device(client, build_identity2, filesystem);
+		result = restore_device(client, build_identity, filesystem);
 		if (result < 0) {
 			error("ERROR: Unable to restore device\n");
 			if (delete_fs && filesystem)
